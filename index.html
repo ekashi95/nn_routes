@@ -51,8 +51,9 @@
     import { iconTemplates, layerTranslations } from 'icons';
 
     document.addEventListener("DOMContentLoaded", function() {
-        const COLOR_TRAVELED = '#238b45';     
-        const COLOR_PROSPECTIVE = '#2171b5';  
+        const COLOR_TRAVELED = '#ff6600';     
+        const COLOR_PROSPECTIVE = '#7d8700';
+        const COLOR_ACTIVE = '#405481';
 
         // Создаем карту (Объект L уже полностью готов и содержит L.GPX)
         const map = L.map('map').setView([55.870864, 44.352342], 9); 
@@ -167,8 +168,9 @@
 
                             // 3. Красим текущий маршрут в оранжевый
                             e.layer.setStyle({
-                                color: '#DC143C',
-                                weight: 5
+                                color: COLOR_ACTIVE,
+                                weight: 5,
+                                opacity: 1
                             });
 
                             // 4. Запоминаем этот маршрут как активный
@@ -191,7 +193,6 @@
             .catch(err => console.error("Ошибка загрузки routes_data.json:", err));
 
         // --- 3. ФУНКЦИЯ ОБНОВЛЕНИЯ МЕНЮ СЛОЕВ ---
-        // Объявляем переменные для двух панелей управления
         let routesControl = null;
         let objectsControl = null;
 
@@ -200,10 +201,10 @@
             if (routesControl) map.removeControl(routesControl);
             if (objectsControl) map.removeControl(objectsControl);
             
-            // 1. Панель для маршрутов с ЦВЕТНЫМИ МЕТКАМИ (HTML-иконками)
+            // 1. Панель для маршрутов с динамическими цветами
             const routeOverlays = {
-                [`<span style="display:inline-block; width:12px; height:6px; background:${COLOR_TRAVELED}; margin-right:6px; vertical-align:middle; border-radius:1px;"></span>Пройденные`]: routeLayers["Пройденные"],
-                [`<span style="display:inline-block; width:12px; height:6px; background:${COLOR_PROSPECTIVE}; margin-right:6px; vertical-align:middle; border-radius:1px;"></span>Перспективные`]: routeLayers["Перспективные"]
+                [`<span style="display:inline-block; width:12px; height:4px; background:${COLOR_TRAVELED}; margin-right:6px; vertical-align:middle; border-radius:1px;"></span>Пройденные`]: routeLayers["Пройденные"],
+                [`<span style="display:inline-block; width:12px; height:4px; background:${COLOR_PROSPECTIVE}; margin-right:6px; vertical-align:middle; border-radius:1px;"></span>Перспективные`]: routeLayers["Перспективные"]
             };
             
             // Создаем панель маршрутов
@@ -213,9 +214,8 @@
             const routesContainer = routesControl.getContainer();
             const routesHeader = document.createElement('h4');
             routesHeader.innerText = 'Маршруты';
-            routesHeader.style.margin = '0 0 5px 0'; // Стилизация заголовка
+            routesHeader.style.margin = '0 0 5px 0';
             routesContainer.insertBefore(routesHeader, routesContainer.firstChild);
-
 
             // 2. Панель для объектов (точек)
             const objectOverlays = {};
@@ -231,34 +231,81 @@
             if (hasObjects) {
                 objectsControl = L.control.layers(null, objectOverlays, { collapsed: false }).addTo(map);
                 
-                // Добавляем подзаголовок "Объекты" внутрь панели объектов
                 const objectsContainer = objectsControl.getContainer();
+                
+                // Создаем контейнер для заголовка и быстрых ссылок
+                const headerContainer = document.createElement('div');
+                headerContainer.style.margin = '0 0 8px 0';
+                headerContainer.style.borderBottom = '1px solid #ccc';
+                headerContainer.style.paddingBottom = '5px';
+
+                // Создаем заголовок "Объекты"
                 const objectsHeader = document.createElement('h4');
                 objectsHeader.innerText = 'Объекты';
-                objectsHeader.style.margin = '0 0 5px 0';
-                objectsContainer.insertBefore(objectsHeader, objectsContainer.firstChild);
+                objectsHeader.style.margin = '0 0 3px 0';
+                headerContainer.appendChild(objectsHeader);
+
+                // Создаем ссылку "Включить все"
+                const linkAll = document.createElement('a');
+                linkAll.href = '#';
+                linkAll.innerText = 'Включить все';
+                linkAll.style.fontSize = '11px';
+                linkAll.style.color = '#0078A8';
+                linkAll.style.textDecoration = 'none';
+                linkAll.style.marginRight = '10px';
+                
+                linkAll.onclick = function(e) {
+                    e.preventDefault();
+                    for (let type in markersLayers) {
+                        if (!map.hasLayer(markersLayers[type])) {
+                            map.addLayer(markersLayers[type]);
+                        }
+                    }
+                    objectsControl._update(); 
+                };
+
+                // Создаем ссылку "Отключить все"
+                const linkNone = document.createElement('a');
+                linkNone.href = '#';
+                linkNone.innerText = 'Отключить все';
+                linkNone.style.fontSize = '11px';
+                linkNone.style.color = '#0078A8';
+                linkNone.style.textDecoration = 'none';
+                
+                linkNone.onclick = function(e) {
+                    e.preventDefault();
+                    for (let type in markersLayers) {
+                        if (map.hasLayer(markersLayers[type])) {
+                            map.removeLayer(markersLayers[type]);
+                        }
+                    }
+                    objectsControl._update();
+                };
+
+                // Добавляем ссылки под заголовок
+                headerContainer.appendChild(linkAll);
+                headerContainer.appendChild(linkNone);
+
+                // Вставляем собранный блок в самое начало панели управления
+                objectsContainer.insertBefore(headerContainer, objectsContainer.firstChild);
             }
         }
-        // --- 4. СБРОС ВЫДЕЛЕНИЯ ПРИ КЛИКЕ НА КАРТУ ---
+
+        // --- 4. СБРОС ВЫДЕЛЕНИЯ ПРИ КЛИКЕ НА КАРТУ ИЛИ ЗАКРЫТИИ POPUP ---
         function resetActiveRoute() {
             if (activeRoute) {
                 activeRoute.setStyle({
                     color: activeRoute.options.originalColor,
                     weight: 3
                 });
-                activeRoute = null; // Очищаем переменную
+                activeRoute = null;
             }
         }
 
-        // Сброс по клику на пустое место карты
         map.on('click', resetActiveRoute);
-
-        // Сброс при закрытии любого всплывающего окна (крестиком или кликом в сторону)
         map.on('popupclose', resetActiveRoute);
-    });
-    
 
-
+    }); // Закрытие для document.addEventListener("DOMContentLoaded", ...
 </script>
 </body>
 </html>
