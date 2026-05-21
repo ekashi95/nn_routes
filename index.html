@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Достопримечательности и маршруты</title>
+    <link rel="icon" href="favicon.ico">
+
+    <!-- СНАЧАЛА ПОДКЛЮЧАЕМ СТИЛИ LEAFLET -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+    
+    <!-- ЗАТЕМ ПОДКЛЮЧАЕМ СКРИПТ LEAFLET -->
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+    <link href="styles/style.css" rel="stylesheet" type="text/css" />
+</head>
+
+
+<body>
+
+<div id="map"></div>
+
+<!-- <script src="https://unpkg.com"></script> -->
+
+<!-- <script type="importmap">
+  {
+    "imports": {
+      "icons": "./icons.js",
+      "leaflet-gpx": "https://cdn.jsdelivr.net/npm/leaflet-gpx@1.7.0/gpx.min.js"
+    }
+  }
+</script> -->
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet-gpx@1.7.0/gpx.min.js"></script>
+
+<!-- 2. БЛОК ИМПОРТМАП (Оставляем ИСКЛЮЧИТЕЛЬНО для ваших локальных иконок) -->
+<script type="importmap">
+  {
+    "imports": {
+      "icons": "./icons.js"
+    }
+  }
+</script>
+
+<!-- 3. ОСНОВНОЙ КОД КАРТЫ -->
+<script type="module">
+    // Импортируем ТОЛЬКО ваши локальные иконки
+    import { iconTemplates, layerTranslations } from 'icons';
+
+    document.addEventListener("DOMContentLoaded", function() {
+        const COLOR_TRAVELED = '#238b45';     
+        const COLOR_PROSPECTIVE = '#2171b5';  
+
+        // Создаем карту (Объект L уже полностью готов и содержит L.GPX)
+        const map = L.map('map').setView([55.870864, 44.352342], 9); 
+
+        let activeRoute = null;
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Группы слоев для маршрутов
+        const routeLayers = {
+            "Пройденные": L.layerGroup().addTo(map),
+            "Перспективные": L.layerGroup().addTo(map)
+        };
+        const markersLayers = {};
+
+        // --- 1. ЗАГРУЗКА ТОЧЕК ---
+        fetch('map_data.json')
+            .then(response => response.json())
+            .then(data => {
+                data.forEach(point => {
+                    if (!point.lat || !point.lng) return; 
+
+                    if (!markersLayers[point.type]) {
+                        markersLayers[point.type] = L.layerGroup().addTo(map);
+                    }
+                    
+                    const svgHtml = iconTemplates[point.type] || iconTemplates["default"];
+                    const customIcon = L.divIcon({
+                        html: svgHtml,
+                        className: 'custom-svg-icon',
+                        iconSize: [40, 40],    // Убедитесь, что размеры указаны
+                        iconAnchor: [20, 40],  // Убедитесь, что анкоры указаны
+                        popupAnchor: [0, -32]
+                    });
+
+                    const cleanDescription = (point.description && point.description !== "null") ? point.description : "";
+                    const marker = L.marker([point.lat, point.lng], { icon: customIcon })
+                        .bindPopup(`<b>${point.name}</b>${cleanDescription ? `<br>${cleanDescription}` : ''}`);
+                    
+                    markersLayers[point.type].addLayer(marker);
+                });
+                updateLayersControl();
+            })
+            .catch(err => console.error("Ошибка загрузки map_data.json:", err));
+
+        // --- 2. ЗАГРУЗКА МАРШРУТОВ ---
+         fetch('routes_data.json')
+            .then(response => response.json())
+            .then(routes => {
+                routes.forEach(routeInfo => {
+                    // Сохраняем базовый цвет в переменную, чтобы использовать её дважды
+                    const baseColor = routeInfo.type === 'traveled' ? COLOR_TRAVELED : COLOR_PROSPECTIVE;
+
+                    const gpxOptions = {
+                        async: true,
+                        marker_options: { 
+                            startIconUrl: null,
+                            endIconUrl: null,  
+                            shadowUrl: null 
+                        },
+                        polyline_options: {
+                            color: baseColor,
+                            opacity: 0.75,
+                            weight: 3
+                        }
+                    };
+
+                    const gpxLayer = new L.GPX(routeInfo.file, gpxOptions);
+                    
+                    // ОБНОВЛЕННЫЙ БЛОК: Сбор данных и вывод в Popup
+                    gpxLayer.on('loaded', function(e) {
+                        const gpx = e.target;
+                        
+                        // Получаем дистанцию в метрах и переводим в километры
+                        const distanceMeters = gpx.get_distance(); 
+                        const distanceKm = (distanceMeters / 1000).toFixed(1); // Округляем до 1 знака
+
+                        const dateLine = routeInfo.date ? `${routeInfo.date}<br>` : '';
+                        
+                        // Формируем красивый текст для всплывающего окна
+                        const popupContent = `
+                            <b>${routeInfo.name}</b>
+                            <div style="margin-top: 5px; color: #555; font-size: 0.9em;">
+                                ${dateLine}${distanceKm} км
+                            </div>
+                        `;
+                        
+                        gpx.bindPopup(popupContent);
+                        console.log(`Маршрут загружен: ${routeInfo.file} (${distanceKm} км)`);
+                    });
+
+                    // ОБРАБОТЧИК КЛИКА НА МАРШРУТ С ФУНКЦИЕЙ СБРОСА
+                    gpxLayer.on('click', function(e) {
+                        // Остановка всплытия события, чтобы клик не уходил на карту map.on('click')
+                        L.DomEvent.stopPropagation(e);
+
+                        if (e.layer && typeof e.layer.setStyle === 'function') {
+                            // 1. Сбрасываем предыдущий активный маршрут, если он есть
+                            if (activeRoute && activeRoute !== e.layer) {
+                                activeRoute.setStyle({
+                                    color: activeRoute.options.originalColor,
+                                    weight: 3
+                                });
+                            }
+
+                            // 2. Сохраняем оригинальный цвет прямо в объект полилинии (если еще не сохранен)
+                            if (!e.layer.options.originalColor) {
+                                e.layer.options.originalColor = baseColor;
+                            }
+
+                            // 3. Красим текущий маршрут в оранжевый
+                            e.layer.setStyle({
+                                color: '#DC143C',
+                                weight: 5
+                            });
+
+                            // 4. Запоминаем этот маршрут как активный
+                            activeRoute = e.layer;
+                        }
+                    });
+
+                    gpxLayer.on('error', function(e) {
+                        console.error(`Ошибка парсинга GPX файла: ${routeInfo.file}`, e.err);
+                    });
+
+                    if (routeInfo.type === 'traveled') {
+                        routeLayers["Пройденные"].addLayer(gpxLayer);
+                    } else {
+                        routeLayers["Перспективные"].addLayer(gpxLayer);
+                    }
+                });
+                updateLayersControl();
+            })
+            .catch(err => console.error("Ошибка загрузки routes_data.json:", err));
+
+        // --- 3. ФУНКЦИЯ ОБНОВЛЕНИЯ МЕНЮ СЛОЕВ ---
+        // Объявляем переменные для двух панелей управления
+        let routesControl = null;
+        let objectsControl = null;
+
+        function updateLayersControl() {
+            // Удаляем старые панели, если они существовали
+            if (routesControl) map.removeControl(routesControl);
+            if (objectsControl) map.removeControl(objectsControl);
+            
+            // 1. Панель для маршрутов с ЦВЕТНЫМИ МЕТКАМИ (HTML-иконками)
+            const routeOverlays = {
+                [`<span style="display:inline-block; width:12px; height:6px; background:${COLOR_TRAVELED}; margin-right:6px; vertical-align:middle; border-radius:1px;"></span>Пройденные`]: routeLayers["Пройденные"],
+                [`<span style="display:inline-block; width:12px; height:6px; background:${COLOR_PROSPECTIVE}; margin-right:6px; vertical-align:middle; border-radius:1px;"></span>Перспективные`]: routeLayers["Перспективные"]
+            };
+            
+            // Создаем панель маршрутов
+            routesControl = L.control.layers(null, routeOverlays, { collapsed: false }).addTo(map);
+            
+            // Добавляем подзаголовок "Маршруты" внутрь созданной панели
+            const routesContainer = routesControl.getContainer();
+            const routesHeader = document.createElement('h4');
+            routesHeader.innerText = 'Маршруты';
+            routesHeader.style.margin = '0 0 5px 0'; // Стилизация заголовка
+            routesContainer.insertBefore(routesHeader, routesContainer.firstChild);
+
+
+            // 2. Панель для объектов (точек)
+            const objectOverlays = {};
+            let hasObjects = false;
+
+            for (let type in markersLayers) {
+                const translatedName = layerTranslations[type] || type;
+                objectOverlays[translatedName] = markersLayers[type];
+                hasObjects = true;
+            }
+
+            // Создаем панель объектов, только если загрузилась хотя бы одна точка
+            if (hasObjects) {
+                objectsControl = L.control.layers(null, objectOverlays, { collapsed: false }).addTo(map);
+                
+                // Добавляем подзаголовок "Объекты" внутрь панели объектов
+                const objectsContainer = objectsControl.getContainer();
+                const objectsHeader = document.createElement('h4');
+                objectsHeader.innerText = 'Объекты';
+                objectsHeader.style.margin = '0 0 5px 0';
+                objectsContainer.insertBefore(objectsHeader, objectsContainer.firstChild);
+            }
+        }
+        // --- 4. СБРОС ВЫДЕЛЕНИЯ ПРИ КЛИКЕ НА КАРТУ ---
+        function resetActiveRoute() {
+            if (activeRoute) {
+                activeRoute.setStyle({
+                    color: activeRoute.options.originalColor,
+                    weight: 3
+                });
+                activeRoute = null; // Очищаем переменную
+            }
+        }
+
+        // Сброс по клику на пустое место карты
+        map.on('click', resetActiveRoute);
+
+        // Сброс при закрытии любого всплывающего окна (крестиком или кликом в сторону)
+        map.on('popupclose', resetActiveRoute);
+    });
+    
+
+
+</script>
+</body>
+</html>
